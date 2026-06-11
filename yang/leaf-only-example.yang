@@ -1,0 +1,21 @@
+module routing-protocol-example {
+    yang-version "1";
+    namespace "urn:routing-protocol-example";
+    prefix re;
+    identity routing-protocol;
+
+    identity ospf {
+        base routing-protocol;
+    }
+
+    identity bgp {
+        base routing-protocol;
+    }
+
+    leaf protocol {
+        type identityref {
+            base routing-protocol;
+        }
+        default bgp;
+    }
+}

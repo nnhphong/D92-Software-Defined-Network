@@ -1,0 +1,49 @@
+module grouping {
+    yang-version "1";
+    namespace "urn:grouping";
+    prefix re;
+
+    identity routing-protocol;
+
+    identity ospf {
+        base routing-protocol;
+    }
+
+    identity bgp {
+        base routing-protocol;
+    }
+
+    grouping abc {
+        leaf protocol {
+            type identityref {
+                base routing-protocol;
+            }
+            default bgp;
+        }
+
+        leaf num-routers {
+            type int8;
+            default 3;
+            description "number of routers in the topology";
+        }
+    }
+
+    uses abc;
+
+    /*
+    Grouping is reusable set of nodes (container or leaves)
+    So the group abc in XML can be reused:
+    <group-A>
+        <protocol>bgp</protocol>
+        <num-routers>4</num-routers>
+    </group-A>
+
+    <group-B>
+        <group-C></group-C>
+        <group-D>
+            <protocol>bgp</protocol>
+            <num-routers>4</num-routers>
+        </group-D>
+    </group-B>
+    */
+}

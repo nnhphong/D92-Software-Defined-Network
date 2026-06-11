@@ -1,0 +1,45 @@
+module container-example {
+    yang-version "1";
+    namespace "urn:container-example";
+    prefix re;
+
+    container ports {
+        description "A list of settings for port configuration model";
+        
+        list port {
+            key "port-number";
+            description "List of ports on a switch";
+
+            leaf port-speed {
+                type int32;
+                description "abc";
+            }
+
+            leaf port-number {
+                type int8;
+            }   
+        }
+
+        leaf switch-name {
+            type string;
+            default "Cisco switch";
+        }
+    }
+    
+    /*
+    <ports xmlns="urn:routing-example">
+        <port>
+            <port-number>1</port-number>   <-- Key by port-number, has to be UNIQUE
+            <port-speed>500</port-speed>
+            <config>...</config>
+        </port>
+
+        <port>
+            <port-number>2</port-number>
+            <port-speed>200</port-speed>
+            <config>...</config>
+        </port>
+        <switch-name>Cisco Switch</switch-name>
+    </ports> 
+    */
+}

@@ -149,7 +149,12 @@ app-uninstall:
 app-reload: app-uninstall app-install
 
 yang-tools:
-	docker run --rm -it -v ${curr_dir}/yang/demo-port.yang:/models/demo-port.yang ${YANG_IMG}
+	docker run --rm -it \
+	-v ${curr_dir}/yang/demo-port.yang:/models/demo-port.yang \
+	-v ${curr_dir}/yang/container-example.yang:/models/container-example.yang \
+	-v ${curr_dir}/yang/grouping-example.yang:/models/grouping-example.yang \
+	-v ${curr_dir}/yang/leaf-only-example.yang:/models/leaf-only-example.yang \
+	${YANG_IMG}
 
 solution-apply:
 	mkdir working_copy

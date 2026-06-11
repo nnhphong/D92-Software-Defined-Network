@@ -72,6 +72,7 @@ In the interface model, we can see the path to enable or disable an interface:
 `interfaces/interface[name]/config/enabled`
 
 What is the path to read the number of incoming packets (`in-pkts`) on an interface?
+<br>**Answer**: `interfaces/interface[name]/state/counters/in-pkts`
 
 ------
 
@@ -82,6 +83,23 @@ What is the path to read the number of incoming packets (`in-pkts`) on an interf
 Try to find the description of the `enabled` or `in-pkts` leaf nodes.
 
 *Hint:* Take a look at the `openconfig-interfaces.yang` file.
+
+```yang
+leaf in-pkts {
+      type oc-yang:counter64;
+      description
+        "The total number of packets received on the interface,
+        including all unicast, multicast, broadcast and bad packets
+        etc.";
+      reference
+        "RFC 2819: Remote Network Monitoring Management Information Base.
+        RFC 4293: Management Information Base for the
+        Internet Protocol (IP).";
+    }
+```
+
+**Description**: The total number of packets received on the interface,
+including all unicast, multicast, broadcast and bad packets etc.
 
 ------
 
@@ -106,12 +124,18 @@ We can also use `pyang` to generate a DSDL schema based on the YANG model:
 bash-4.4# pyang -f dsdl demo-port.yang | xmllint --format -
 ```
 
+If your leaf has default value and you want to populate in your XML skeleton code, you can use ``--sample-xml-skeleton-defaults`` flag:
+```
+pyang -f sample-xml-skeleton --sample-xml-skeleton-defaults test.yang
+```
+
 The first part of the schema describes the tree structure, and the second part
 describes the value constraints for the leaf nodes.
 
 *Extra credit:* Try adding new speed identity (e.g. `SPEED_100G`) or changing
 the range for `port-number` values in `demo-port.yang`, then rerun `pyang -f
 dsdl`. Do you see your changes reflected in the DSDL schema?
+<br>**Answer**: There is another ```<define>``` appears in the DSDL file and ```<choice>``` for element like ```leaf throughput``` or ```leaf speed``` has one more option ```<refname="__demo-port_SPEED_100GB"/>```
 
 ------
 
@@ -309,11 +333,37 @@ $ util/gnmi-cli --grpc-addr localhost:50001 get / | util/oc-pb-decoder | less
 
 The contents of the response should now be easier to read. Scroll down to the first
 `interface`. Is the interface enabled? What is the speed of the port?
+```yang
+interface {
+  name: "leaf1-eth1"
+  interface {
+    enabled {
+      value: true
+    }
+    physical_channel {
+      value: 1
+    }
+    ethernet {
+      port_speed: OPENCONFIGIFETHERNETETHERNETSPEED_SPEED_10GB
+      auto_negotiate {
+      }
+    }
+    id {
+      value: 1
+    }
+    ifindex {
+      value: 1
+    }
+  }
+}
+```
+**Answer**: Yes, the interaface is enabled, and speed is 10GB
 
 ------
 
 *Extra credit:* Can you find `in-pkts`? If not, why do you think they are
 missing?
+<br>Answer: No... `in-pkts` doesn't seem to exists there. My guess was because there is no subinterfaces defined for the existing interface, and ``in-pkts`` is defined many layer down inside ``subinterfaces-top``
 
 -------
 
