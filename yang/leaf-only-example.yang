@@ -1,6 +1,6 @@
-module routing-protocol-example {
+module leaf-only-example {
     yang-version "1";
-    namespace "urn:routing-protocol-example";
+    namespace "urn:leaf-only-example";
     prefix re;
     identity routing-protocol;
 
@@ -12,10 +12,11 @@ module routing-protocol-example {
         base routing-protocol;
     }
 
-    leaf protocol {
-        type identityref {
-            base routing-protocol;
+    container A {
+        leaf protocol {
+            type identityref {
+                base routing-protocol;
+            }
         }
-        default bgp;
     }
 }

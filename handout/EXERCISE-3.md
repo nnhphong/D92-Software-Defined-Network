@@ -302,12 +302,12 @@ In the ONOS topology view click on one of the switches (e.g `device:leaf1`)
 and the Device Details panel appears. In that panel click on the Pipeconf icon
 (the last one), to open the Pipeconf view for that device.
 
-![device-leaf1-details-panel](img/device-leaf1-details-panel.png)
+![device-leaf1-details-panel](../img/device-leaf1-details-panel.png)
 
 Here you will find info on the pipeconf currently used by the specific device,
 including details of the P4 tables.
 
-![onos-gui-pipeconf-leaf1](img/onos-gui-pipeconf-leaf1.png)
+![onos-gui-pipeconf-leaf1](../img/onos-gui-pipeconf-leaf1.png)
 
 Clicking the table row brings up the details panel, showing details of the match
 fields, actions, action parameter bit widths, etc.
