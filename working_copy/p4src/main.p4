@@ -467,6 +467,7 @@ control IngressPipeImpl (inout parsed_headers_t    hdr,
     action send_to_cpu() {
         standard_metadata.egress_spec = CPU_PORT;
     }
+
     action clone_to_cpu() {
         // Cloning is achieved by using a v1model-specific primitive. Here we
         // set the type of clone operation (ingress-to-egress pipeline), the
@@ -504,9 +505,6 @@ control IngressPipeImpl (inout parsed_headers_t    hdr,
             // 1. Set the packet egress port to that found in the cpu_out header
             // 2. Remove (set invalid) the cpu_out header
             // 3. Exit the pipeline here (no need to go through other tables
-            standard_metadata.egress_spec = hdr.cpu_out.egress_port;
-            hdr.cpu_out.setInvalid();
-            exit;
         }
 
         bool do_l3_l2 = true;
@@ -560,8 +558,6 @@ control EgressPipeImpl (inout parsed_headers_t hdr,
             // 1. Set cpu_in header as valid
             // 2. Set the cpu_in.ingress_port field to the original packet's
             //    ingress port (standard_metadata.ingress_port).
-            hdr.cpu_in.setValid();
-            hdr.cpu_in.ingress_port = standard_metadata.ingress_port;
         }
 
         // If this is a multicast packet (flag set by l2_ternary_table), make
