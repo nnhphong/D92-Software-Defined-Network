@@ -397,7 +397,7 @@ If you completed the P4 and app implementation correctly, and ECMP is working,
 you should see traffic being forwarded to both spines as in the screenshot
 below:
 
-<img src="img/routing-ecmp.png" alt="ECMP Test" width="344"/>
+<img src="../img/routing-ecmp.png" alt="ECMP Test" width="344"/>
 
 ## Congratulations!
 
