@@ -453,14 +453,15 @@ control IngressPipeImpl (inout parsed_headers_t    hdr,
     // target MAC address. The action also sets the egress port to the ingress
     // one where the NDP NS packet was received.
     action ndp_ns_to_na(mac_addr_t target_mac) {
+        hdr.ethernet.dst_addr = hdr.ethernet.src_addr;
         hdr.ethernet.src_addr = target_mac;
-        hdr.ethernet.dst_addr = IPV6_MCAST_01;
+        // hdr.ethernet.dst_addr = IPV6_MCAST_01;
         ipv6_addr_t host_ipv6_tmp = hdr.ipv6.src_addr;
         hdr.ipv6.src_addr = hdr.ndp.target_ipv6_addr;
         hdr.ipv6.dst_addr = host_ipv6_tmp;
         hdr.ipv6.next_hdr = IP_PROTO_ICMPV6;
         hdr.icmpv6.type = ICMP6_TYPE_NA;
-        hdr.ndp.flags = NDP_FLAG_ROUTER | NDP_FLAG_OVERRIDE;
+        hdr.ndp.flags = NDP_FLAG_ROUTER | NDP_FLAG_SOLICITED | NDP_FLAG_OVERRIDE;
         hdr.ndp.type = NDP_OPT_TARGET_LL_ADDR;
         hdr.ndp.length = 1;
         hdr.ndp.target_mac_addr = target_mac;
