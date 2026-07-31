@@ -517,7 +517,81 @@ control IngressPipeImpl (inout parsed_headers_t    hdr,
     // *** TODO EXERCISE 6 (SRV6)
     //
     // Implement tables to provide SRV6 logic.
+    action srv6_end() {
+        hdr.srv6h.segment_left = hdr.srv6h.segment_left - 1;
+        hdr.ipv6.dst_addr = local_metadata.next_srv6_sid;
+        // hdr.ipv6.dst_addr = hdr.srv6_list[hdr.srv6h.segment_left];
+    }
 
+    table srv6_endpoint {
+        key = {
+            hdr.ipv6.dst_addr : lpm;
+        }
+
+        actions = {
+            srv6_end;
+            @defaultonly NoAction;
+        }
+    }
+
+    action insert_srv6h_header(bit<8> num_segments) {
+        hdr.srv6h.setValid();
+        hdr.srv6h.next_hdr = hdr.ipv6.next_hdr;
+        hdr.srv6h.hdr_ext_len =  num_segments * 2;
+        hdr.srv6h.routing_type = 4;
+        hdr.srv6h.segment_left = num_segments - 1;
+        hdr.srv6h.last_entry = num_segments - 1;
+        hdr.srv6h.flags = 0;
+        hdr.srv6h.tag = 0;
+        hdr.ipv6.next_hdr = IP_PROTO_SRV6;
+    }
+
+    action srv6_t_insert_2(ipv6_addr_t s1, ipv6_addr_t s2) {
+        hdr.ipv6.dst_addr = s1;
+        hdr.ipv6.payload_len = hdr.ipv6.payload_len + 40;
+        insert_srv6h_header(2);
+        hdr.srv6_list[0].setValid();
+        hdr.srv6_list[0].segment_id = s2;
+        hdr.srv6_list[1].setValid();
+        hdr.srv6_list[1].segment_id = s1;
+    }
+
+    action srv6_t_insert_3(ipv6_addr_t s1, ipv6_addr_t s2, ipv6_addr_t s3) {
+        hdr.ipv6.dst_addr = s1;
+        hdr.ipv6.payload_len = hdr.ipv6.payload_len + 56;
+        insert_srv6h_header(3);
+        hdr.srv6_list[0].setValid();
+        hdr.srv6_list[0].segment_id = s3;
+        hdr.srv6_list[1].setValid();
+        hdr.srv6_list[1].segment_id = s2;
+        hdr.srv6_list[2].setValid();
+        hdr.srv6_list[2].segment_id = s1;
+    }
+
+    action srv6_t_insert_4(ipv6_addr_t s1, ipv6_addr_t s2, ipv6_addr_t s3, ipv6_addr_t s4) {
+        hdr.ipv6.dst_addr = s1;
+        hdr.ipv6.payload_len = hdr.ipv6.payload_len + 72;
+        insert_srv6h_header(4);
+        hdr.srv6_list[0].setValid();
+        hdr.srv6_list[0].segment_id = s4;
+        hdr.srv6_list[1].setValid();
+        hdr.srv6_list[1].segment_id = s3;
+        hdr.srv6_list[2].setValid();
+        hdr.srv6_list[2].segment_id = s2;
+        hdr.srv6_list[3].setValid();
+        hdr.srv6_list[3].segment_id = s1;
+    }
+
+    table srv6_transit {
+        key = {
+            hdr.ipv6.dst_addr : lpm;
+        }
+        actions = {
+            srv6_t_insert_2;
+            srv6_t_insert_3;
+            srv6_t_insert_4;
+        }
+    }
 
     // *** ACL
     //
@@ -595,6 +669,26 @@ control IngressPipeImpl (inout parsed_headers_t    hdr,
             // routing table. You should also add a conditional to drop the
             // packet if the hop_limit reaches 0.
             if (l2_my_station.apply().hit) {
+                /* SRv6 logic */
+                if (!srv6_endpoint.apply().hit) {
+                    /* transit */
+                    srv6_transit.apply();
+                }
+                else {
+                    /* endpoint */
+                    /* PSP logic */
+                    if (hdr.srv6h.segment_left == 0) {
+                        hdr.ipv6.payload_len = hdr.ipv6.payload_len - 8;
+                        hdr.ipv6.payload_len = hdr.ipv6.payload_len - 16 * (bit<16>)(hdr.srv6h.last_entry + 1);
+                        hdr.ipv6.next_hdr = hdr.srv6h.next_hdr;
+                        hdr.srv6h.setInvalid();
+                        hdr.srv6_list[0].setInvalid();
+                        hdr.srv6_list[1].setInvalid();
+                        hdr.srv6_list[2].setInvalid();
+                        hdr.srv6_list[3].setInvalid();
+                    }
+                    
+                }
                 if (l3_ipv6_routing.apply().hit) {
                     if (hdr.ipv6.hop_limit == 0) {
                         drop();
@@ -602,12 +696,6 @@ control IngressPipeImpl (inout parsed_headers_t    hdr,
                     }
                 }
             }
-
-            // *** TODO EXERCISE 6
-            // Insert logic to match the SRv6 My SID and Transit tables as well
-            // as logic to perform PSP behavior. HINT: This logic belongs
-            // somewhere between checking the switch's my station table and
-            // applying the routing table.
 
             // L2 bridging logic. Apply the exact table first...
             if (!l2_exact_table.apply().hit) {

@@ -37,5 +37,36 @@ Reasons: flow rule take time to respond and take effective. While flow rule hasn
 
 ### 4. `STALE` -> `FAILED` h1b's NDP cache
 
-unresolved
+(unresolved)
 
+How NDP works: https://oneuptime.com/blog/post/2026-03-20-ndp-nud-states/view#probe-state 
+
+# Exercise 6: Segment Routing (SRv6)
+## SRv6
+
+The IPv6 routing header looks as follows:
+```
+     0                   1                   2                   3
+     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    | Next Header   |  Hdr Ext Len  | Routing Type  | Segments Left |
+    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    |  Last Entry   |     Flags     |              Tag              |
+    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    |                                                               |
+    |            Segment List[0] (128 bits IPv6 address)            |
+    |                                                               |
+    |                                                               |
+    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    |                                                               |
+    |                                                               |
+                                  ...
+    |                                                               |
+    |                                                               |
+    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    |                                                               |
+    |            Segment List[n] (128 bits IPv6 address)            |
+    |                                                               |
+    |                                                               |
+    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```

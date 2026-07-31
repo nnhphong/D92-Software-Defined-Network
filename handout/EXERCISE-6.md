@@ -214,7 +214,7 @@ packets.
 - Press `a` until you see "Port stats (packets/second)"
 - Press `l` to show device labels
 
-<img src="img/srv6-ping-1.png" alt="Ping Test" width="344"/>
+<img src="../img/srv6-ping-1.png" alt="Ping Test" width="344"/>
 
 Once you determine which of the spines your packets are being hashed to (and it
 could be both, with requests and replies taking different paths), you should
@@ -269,7 +269,7 @@ onos> flows any device:leaf1 | grep tableId=IngressPipeImpl.srv6_transit
 You should now return to the ONOS UI to confirm that traffic is flowing through
 the specified spine.
 
-<img src="img/srv6-ping-2.png" alt="SRv6 Ping Test" width="335"/>
+<img src="../img/srv6-ping-2.png" alt="SRv6 Ping Test" width="335"/>
 
 ## 5. Debugging and Clean Up
 
