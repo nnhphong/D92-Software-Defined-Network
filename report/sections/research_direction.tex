@@ -1,0 +1,15 @@
+\section{Research Direction}\label{sec:research}
+% NOTE-TO-SELF (not for final report): this report is primarily a synthesis of the
+% Systems Approach SDN textbook, written to consolidate course learning, not as a
+% publishable survey. If ever extended toward something publishable, the seed is
+% the end-host critique in Sec. II-B (vSwitch -> physical switch via VEPA/802.1Qbg;
+% vNIC -> SR-IOV/PCI passthrough): turn that into original comparative analysis
+% (e.g., latency/throughput benchmarks or a structured literature comparison)
+% grounded in primary sources (OVS NSDI'15 paper, 802.1Qbg spec, SR-IOV spec)
+% rather than the textbook, and broaden sourcing beyond a single reference overall.
+%
+% TODO: read more on OVS internals (kernel datapath vs. userspace/DPDK datapath)
+% and how OVS's forwarding pipeline is offloaded onto SmartNICs in practice
+% (e.g., TC flower + switchdev mode on NICs like Mellanox/NVIDIA ConnectX with
+% ASAP^2) before writing anything more specific than "vendors offload part of
+% the vSwitch pipeline onto SmartNIC hardware" in Sec. II-B.

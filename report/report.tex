@@ -65,89 +65,15 @@
 Computer Network, Software-Defined Network, SDN
 \end{IEEEkeywords}
 
-\section{Introduction}
-Started back in 1952, when IBM first manufactured large computer system and sold into the market as mainframe. It was bulky, large, and expensive machine that take up a room size. More importantly, every components within that mainframe is IBM's proprietary hardware, which means, a customer have to buy the whole vertically integrated solution from a single vendor regardless of the solution they want to have for their problem (software calculation, hardware design, finance...).
-\begin{figure}[H]
-    \centering
-    \includegraphics[width=1\linewidth]{graphics/vertical integrated solution.png}
-    \caption{Transformation from vertical market to horizontal marketplace with open interfaces at all level. Adapted from \cite{systemsapproach}.}
-    \label{fig:placeholder}
-\end{figure}
-The evolution began with the arrival of open-source operating systems and microprocessors, which helped transform the market into a horizontal one where innovation could happen at any layer.
-
-SDN initiatives draw the similar inspiration by decoupling the control plane from the data plane. Decision-making logic is decided by a external\footnote{In SDN terminology, a distinction exists between \textbf{external (global) network OS} and the \textbf{internal (local) network OS}. The External NOS referrs to a distributed controller platform to maintain a centralized view of the network (ONOS section) while Internal OS refers to lightweight OS running directly on-switch to manage internal switch operation and communicate with the external network OS.} logically centralized controller\footnote{While SDN control plane is logically centralized to provide a unified global view of network state and simplify network management, production deployment (introduced in ONOS section) are physically distributed for high availability and scalability}, using information from network operating systems enabled on top of the underlying switches. This abstraction simplifies switch's role, off-loading complex decision making logic (i.e., routing, path computation, ACL..) off-device and reducing the switch's primary task to packet forwarding. So they are referred to as "white box" or "bare-metal" switches\footnote{"bare-metal" switches run a ONIE bootloader uses facilities in Linux kernel and BusyBox, defining an open source "install environment" for end users to install target network OS} which doesn't come with a fixed network OS, creating a hardware ecosystem for multiple operating system vendors.
-
-OpenFlow is the pioneer protocol that support this disaggregation in the early stage of SDN. Although it was a main instrumental propelling SDN into the mainstream, OpenFlow now play a small role of today SDN because of an architectural limitation it imposed---namely, its fixed-function match-action pipeline. Modern infrastructure has largely transitioned toward fully programmable data planes driven by the P4 programming language, P4Runtime, and Stratum. The objective of this study is to explore this architectural evolution from early OpenFlow to current P4-based ecosystems deployed across large-scale hyperscale data centers. Unless otherwise noted, the architectural exposition in the remainder of this report, including the accompanying figures, follows the treatment given in \cite{systemsapproach}.
-
-\section{Basic Architecture}
-The core philosophy of Software-Defined Networking is horizontal disaggregation across every layers of the networking stack~\cite{systemsapproach}. Rather than relying on a vertically integrated, propriety hardware appliances, SDN decompose them into abstract components that is independent from other components, allowing each of which being used interchangeably and innovated at each layer.
-\begin{itemize}
-    \item \textbf{Local Network OS layer:} Physical switch hardware is decoupled from proprietary vendor software through bare-metal whitebox switches. Utilizing an Open Network Install Environment (ONIE) bootloader, the switch can load any compatible local Network OS (e.g., Stratum, SONiC) to handle local hardware initialization and peripheral management.
-    \item \textbf{Control-to-Data Communication Interface:} The control plane and data plane interact over well-defined consumer/provider API endpoints using standard protocol (e.g. OpenFlow, gRPC/P4Runtime). This bidirectional interface allows controller to program forwarding rules while collecting real-time telemetry, link states, metrics, and packet from the data plane.
-    \item \textbf{Device Driver \& Pipeline Layer:} This layer resolves hardware heterogeneity by splitting device control into low-level driver abstractions and pipeline-mapping logic. Analogous to a hardware SDK, the \textit{device driver} handles low-level chip management, translate control protocol messages (e.g., OpenFlow or P4Runtime) directly into chip memory while absorbing vendor-specific behavior mismatches. Sitting above the driver, the \textit{pipeliner} maps generic, high-level \textit{flow objectives} into the exact multi-table forwarding pipeline required by the underlying ASIC, freeing higher-layer application logic from needing to know the switch's internal table layout.
-    \item \textbf{Data Plane layer: } Packet processing logic is completely decoupled from fixed-function hardware ASIC pipeline, allowing enterprise to implement custom header protocols on demand instead of waiting for switch vendor for the protocol implementation in their silicon chips. Using P4 language, packet parsing, header modifications, and forwarding behaviors can be programmed, updated, and recompiled directly on the hardware at runtime.
-\end{itemize}
-\subsection{Single-switch perspective: The Software Stack}
-This includes an overview of a SDN stack with the involvement of a switch and controllers, highlight the top-to-bottom software stack being used in the SDN architecture. The main component include the Control App, Network OS, Switch OS, and P4 program--which used for the programmable switch. Figure 2 also introduced an exemplar of open-source software we used for this report (e.g. SD-Fabric, ONOS, Stratum), and protocol uses for communication between each layer. 
-\begin{figure}[H]
-    \centering
-    \includegraphics[width=1\linewidth]{graphics/image.png}
-    \caption{Overall architecture of SDN stack with one switch. Adapted from \cite{systemsapproach}.}
-    \label{fig:placeholder}
-\end{figure}
-At the top of the stack, Control Applications communicate with the Network OS via gRPC over Northbound APIs. Rather than writing raw table entries, applications issue high-level, topology-agnostic \textit{Intent}, or hardware-agnostic routing intents called \textit{Flow Objectives} (e.g., policy constraints or forwarding goals). Concurrently, management interfaces such as gNMI (gRPC Network Management Interface) and gNOI (gRPC Network Operations Interface) are exposed on the Northbound interface, enabling control applications to query dynamic network state (e.g., topology graphs, link statuses) and execute operational lifecycle commands (e.g., rebooting or upgrading devices).
-
-Below the control abstraction is the separation of the control plane and the data plane. The Network OS compiles high-level Flow Objectives into low-level, device-specific \textit{Flow Rules}—concrete match-action entries targeted at explicit hardware table from the entire hardware pipeline. These rules are pushed down via gRPC using southbound protocols such as P4Runtime, OpenFlow, or gNMI. The local Switch OS (e.g., Stratum, originally developed by Google) receives these rules and programs the corresponding entries into the hardware switch silicon\footnote{Switch silicon refers to a specialized integrated circuit (ASIC) designed for line-rate packet processing, switching, and hardware-accelerated QoS management.}. Popular commercial implementations of this merchant silicon include Intel's Barefoot Tofino and Broadcom's Tomahawk chips.
-\subsection{Network-Wide perspective: The Entire Network Data Path}
-The previous subsection examined the SDN architecture through the lens of a single switch, a single controller, and its Network OS. This subsection zooms out to trace the data path end-to-end: from its origination at an end host, across one or more SDN-enabled switches, to its destination at another end host. As noted earlier, each switch along this path runs its own instance of a Switch OS, functioning as an on-host agent that programs flow rules onto the underlying silicon. The remainder of this subsection focuses on the end host itself, as the origination and termination point of the path; the inter-switch portion of the path---how multiple Switch OS instances are stitched together into a fabric under a common Network OS---is treated separately in Section~\ref{sec:onos} and the discussion of the Leaf-Spine Fabric.
-\begin{figure}[H]
-    \centering
-    \includegraphics[width=1\linewidth]{graphics/network-wide sdn.png}
-    \caption{End-End network view of SDN architecture. Adapted from \cite{systemsapproach}.}
-    \label{fig:placeholder}
-\end{figure}
-
-With respect to the end host, Figure 3 highlights three components: the NIC, the virtual switch, and the VMs, all residing on the same physical server. A conventional NIC (Network Interface Card) is a hardware component that connects a computer or device to the network, converting data between the host's internal representation and the electrical or radio-frequency signals carried over the physical medium, and vice versa. The virtual switch (vSwitch, e.g., Open vSwitch) is a software switch that runs within the server's hypervisor and binds to the physical NIC as its uplink. Architecturally, the vSwitch occupies the same role as the Switch OS described in the single-switch view: it can be programmed by the same Network OS over southbound protocols such as OpenFlow or P4Runtime, receiving and installing Flow Rules exactly as a hardware Switch OS would. The distinction is one of substrate rather than function---the vSwitch executes its match-action pipeline in software on the host's general-purpose CPU~\cite{pfaff2015ovs}, whereas a physical switch executes the equivalent pipeline on dedicated ASIC silicon. Once programmed, it behaves as an ordinary switch, receiving packets on an input port and forwarding them to the appropriate output port; the endpoints attached to these virtual ports are typically Virtual Machines (VMs) or containers.
-
-That said, this architecture rests on a few assumptions worth making explicit. First, not every end host runs VMs; the same picture applies to containerized or bare-metal hosts, with the vSwitch's virtual ports simply terminating at a different kind of endpoint. Second, the NIC--vSwitch--VM arrangement in Figure 3 is not the only valid way to structure the end host, but rather one particular perspective. This report, following~\cite{systemsapproach}, adopts a \textit{network-centric} view, in which the vSwitch and NIC are treated as an extension of the network, controlled by the same Network OS as the rest of the fabric. A \textit{host-centric} perspective is equally valid: it instead treats packet processing as a function of the host operating system itself, which means an architectural change in who is in control---instead of being managed by the network controller, it is configured directly by the host itself, via kernel-resident frameworks such as eBPF/XDP or user-space frameworks such as DPDK~\cite{systemsapproach}. Third, the conventional NIC introduced above is itself only one option: vendors have a long history of offloading kernel functionality onto the NIC, and this has led to the Smart Network Interface Card (SmartNIC), a NIC augmented with an FPGA or ASIC capable of running programmable logic. A SmartNIC can replace the conventional NIC, and, going further, can assist or even replace the vSwitch entirely by implementing part or all of its forwarding pipeline directly in NIC hardware~\cite{systemsapproach}. A more detailed treatment of these host-centric and SmartNIC-based alternatives, including their performance tradeoffs, is left for future work (Section~\ref{sec:research}), as it requires background this report has not yet developed.
-\section{Bare-metal switches and P4 programmable data plane}
-
-\section{Switch OS}
-\section{Network OS}\label{sec:onos}
-\section{Leaf-spine Fabric}
-\section{Putting It Together: The Full Fabric}\label{sec:full-fabric}
-% NOTE-TO-SELF: this section is meant to be original synthesis, not textbook
-% paraphrase---write it last, after Bare-metal/Switch OS/Network OS/Leaf-spine
-% Fabric sections are filled in. Goal: one end-to-end diagram (own drawing, not
-% adapted from systemsapproach) tracing a packet from a VM on one end host,
-% through its vSwitch/NIC, across the leaf-spine fabric, to a VM on another end
-% host, annotating which entity (Network OS vs. Switch OS vs. host-centric
-% control) is responsible for each hop.
-\section{Research Direction}\label{sec:research}
-% NOTE-TO-SELF (not for final report): this report is primarily a synthesis of the
-% Systems Approach SDN textbook, written to consolidate course learning, not as a
-% publishable survey. If ever extended toward something publishable, the seed is
-% the end-host critique in Sec. II-B (vSwitch -> physical switch via VEPA/802.1Qbg;
-% vNIC -> SR-IOV/PCI passthrough): turn that into original comparative analysis
-% (e.g., latency/throughput benchmarks or a structured literature comparison)
-% grounded in primary sources (OVS NSDI'15 paper, 802.1Qbg spec, SR-IOV spec)
-% rather than the textbook, and broaden sourcing beyond a single reference overall.
-%
-% TODO: read more on OVS internals (kernel datapath vs. userspace/DPDK datapath)
-% and how OVS's forwarding pipeline is offloaded onto SmartNICs in practice
-% (e.g., TC flower + switchdev mode on NICs like Mellanox/NVIDIA ConnectX with
-% ASAP^2) before writing anything more specific than "vendors offload part of
-% the vSwitch pipeline onto SmartNIC hardware" in Sec. II-B.
-
-\begin{thebibliography}{1}
-
-\bibitem{systemsapproach}
-L. Peterson, C. Cascone, B. O'Connor, T. Vachuska, and B. Davie, ``Software-Defined Networks: A Systems Approach,'' Systems Approach, LLC. [Online]. Available: \url{https://sdn.systemsapproach.org/intro.html}. Accessed: Sep. 5, 2026.
-
-\bibitem{pfaff2015ovs}
-B. Pfaff, J. Pettit, T. Koponen, E. Jackson, A. Zhou, J. Rajahalme, J. Gross, A. Wang, J. Stringer, P. Shelar, K. Amidon, and M. Casado, ``The Design and Implementation of Open vSwitch,'' in \emph{Proc. 12th USENIX Symposium on Networked Systems Design and Implementation (NSDI '15)}, Oakland, CA, USA, May 2015, pp. 117--130.
-
-\end{thebibliography}
+\input{sections/introduction}
+\input{sections/basic_architecture}
+\input{sections/bare_metal_p4}
+\input{sections/switch_os}
+\input{sections/network_os}
+\input{sections/leaf_spine_fabric}
+\input{sections/full_fabric}
+\input{sections/research_direction}
+\input{sections/references}
 
 \end{document}
 %%% Description for the packages used at the beginning of this file
