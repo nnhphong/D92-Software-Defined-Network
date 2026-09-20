@@ -1,4 +1,4 @@
-\section{P4 programmable data plane}
+\section{Programmable data plane and P4 language}
 % TODO: put a section on bare-metal switches hardware %
 Before turning to what P4 is and how the language itself is structured, it is worth establishing why a new data-plane programming model was needed at all. OpenFlow was built to reuse capability that switch vendors already had on-chip: McKeown et al.\ note that ``we exploit the fact that most modern Ethernet switches and routers contain flow-tables (typically built from TCAMs)'' used internally to implement functions such as firewalling, NAT, QoS, and statistics collection, and that OpenFlow simply exposes ``this common set of functions'' through a standard interface~\cite{mckeown2008openflow}. This was a deliberate compromise: rather than requiring new switch hardware, the design goal was a datapath ``amenable to high-performance and low-cost implementations,'' which meant ``forgoing the ability to specify arbitrary handling of each packet and seeking a more limited, but still useful, range of actions''~\cite{mckeown2008openflow}. In its original 2008 form this amounted to a single flow table matched against about a dozen header fields such as MAC address, IP address, protocol, and TCP/UDP ports~\cite{bosshart2014p4}.
 
@@ -9,7 +9,85 @@ That original dozen-field flow table did not remain fixed for long. The formal O
 
 The push toward an OpenFlow 2.0 interface reflected two distinct pressures on any successor design: the need to keep pace with the rapid rate of change in networking requirements, and the need for a design that remained viable over the long term. The immediate problem was one of deployment speed. At the time, bare-metal switches still relied on a fixed-function pipeline hardcoded into the switch firmware to match packets, so supporting a new protocol required two slow steps in sequence. First, the protocol itself had to be agreed upon. Second, once agreed upon, the switch firmware itself had to be updated, since the firmware had no built-in intelligence to parse a raw packet format it had never been told about, and changing the firmware took still more time. Consequently, simply adding a new protocol to the specification was not enough on its own: it could still take vendors years to release a new switch model incorporating it, and for that hardware to then be adopted into the already-deployed network. The implication was that future switches should be able to define custom headers themselves, and that controller applications should likewise be able to understand these custom headers.
 
-\subsection{P4 forwarding pipeline}
-At the architecture level, researchers introduced PISA (Protocol Independent Switching Architecture) as the pipeline design that gives P4 its reconfigurability~\cite{systemsapproach}. Instead of a single fixed flow table, a PISA pipeline is built from three components---a parser, a multi-stage match-action pipeline, and a deparser---each configured by the P4 program itself rather than hardcoded into switch firmware. This generic, configurable structure is what lets the same abstract model describe packet processing across otherwise very different forwarding devices---Ethernet switches, load-balancers, and routers---and across different underlying technologies, whether a fixed-function switch ASIC, an NPU, a reconfigurable switch, a software switch, or an FPGA~\cite{bosshart2014p4}.
+\subsection{Existing efforts for programmable pipelines}
+Programmable forwarding pipelines existed well before P4, in several forms, each trading away something essential. Software switches and modular frameworks such as Click~\cite{kohler2000click} offered complete flexibility, but executed on general-purpose CPUs and therefore operated far below the line rates expected of a switch ASIC; Click was also not designed for the controller-switch split that SDN assumes, and so provided no notion of match-action tables populated at runtime by a controller~\cite{bosshart2014p4}. At the other extreme, network processors, FPGAs, and---by 2013---reconfigurable match-action ASICs such as RMT~\cite{bosshart2013rmt} had demonstrated that this flexibility could in fact be achieved at terabit speeds. The obstacle there was not capability but usability: each chip exposed its own proprietary low-level interface, which Bosshart et al.\ compare to microcode programming, so a forwarding behavior written for one target could not be carried to another~\cite{bosshart2014p4}. The gap P4 was created to fill is therefore a linguistic one rather than a hardware one: it provides a high-level, protocol-agnostic language that a compiler can translate into the configuration each target requires, including the line-rate programmable ASIC pipelines these chips had already made possible~\cite{bosshart2014p4}.
+
+\subsection{Forwarding pipeline}
+At the architecture level, researchers introduced PISA (Protocol Independent Switching Architecture) as the pipeline design that gives P4 its reconfigurability~\cite{systemsapproach}. As shown in Fig.~\ref{fig:pisa-pipeline}, a PISA pipeline is built from three components---a programmable parser, a programmable multi-stage match-action pipeline, and a programmable deparser---each configured by the P4 program itself rather than hardcoded into switch firmware. This generic, configurable structure is what lets the same abstract model describe packet processing across otherwise very different forwarding devices---Ethernet switches, load-balancers, and routers---and across different underlying technologies, whether a fixed-function switch ASIC, an NPU, a reconfigurable switch, a software switch, or an FPGA~\cite{bosshart2014p4}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{graphics/abstract-forwarding-pipeline.png}
+    \caption{Abstract forwarding pipeline that model how most data plane devices are forwarding packet. Adapted from \cite{systemsapproach}.}
+    \label{fig:pisa-pipeline}
+\end{figure}
+
+The parser forms the first stage of the pipeline and extracts header fields from an incoming packet by walking a program-defined parse graph: it sequentially extracts each header and copies its values into the memory defined by that header's structure (e.g., the IPv4 header). Once extracted, these fields are passed to the match-action pipeline, where the design's protocol independence is most apparent. Each stage of the pipeline pairs a block of memory---combining SRAM and TCAM~\cite{systemsapproach}---with an ALU. This memory is not preloaded by the switch vendor to recognize a fixed set of headers; that is, it does not inherently support IPv4 but not IPv6, or TCP but not UDP. It instead behaves as a generic bank of lookup-table entries that the P4 program itself populates at configuration time, using the match keys that a given header requires. The lookup is performed by the memory: the TCAM supports wildcard matching of the arriving packet's fields against the programmed entries, while exact matches are served from SRAM at lower cost~\cite{systemsapproach}. Only after a match is found does the ALU execute the action associated with the matched entry. Because each stage can be pipelined---one stage processing one packet while the next stage concurrently processes another---this reprogrammable design still sustains line-rate throughput~\cite{systemsapproach}. Finally, the deparser reassembles the modified header fields into a single serialized packet before it leaves the pipeline, following the header layout defined by the program.
+
+\subsection{Abstracting the pipeline}
 
 
+\subsection{Example of a P4 program}
+The preceding subsections described the forwarding pipeline in the abstract; this subsection grounds that description in a concrete program. The example used throughout is \texttt{main.p4}, the P4 program written for this project, which is compiled for and executed on BMv2, the reference P4 software switch~\cite{bmv2}. The program declares a range of header formats---Ethernet, IPv4, IPv6, TCP, UDP, ICMP, ICMPv6, and NDP---together with Segment Routing over IPv6 (SRv6) headers and a pair of CPU headers that carry packet-in and packet-out messages between the pipeline and the controller. The subsections that follow examine the program in the order a packet encounters it: the architecture it must conform to, the header formats it defines, the parser that extracts them, the tables that match on the extracted fields, and the actions those tables invoke.
+
+\subsubsection{The V1Switch pipeline}
+BMv2 executes programs written for the \texttt{v1model} architecture~\cite{bmv2}, whose \texttt{V1Switch} package fixes both the blocks a program must provide and the order in which they run: a parser, a checksum-verification block, an ingress pipeline, an egress pipeline, a checksum-computation block, and a deparser (Listing~\ref{lst:v1switch}). A program cannot add, reorder, or omit a stage; a block it does not need must still be supplied with an empty body.
+
+\begin{lstlisting}[caption={Instantiating the \texttt{V1Switch} pipeline in \texttt{main.p4}.},label={lst:v1switch}]
+V1Switch(
+    ParserImpl(),
+    VerifyChecksumImpl(),
+    IngressPipeImpl(),
+    EgressPipeImpl(),
+    ComputeChecksumImpl(),
+    DeparserImpl()
+) main;
+\end{lstlisting}
+
+\subsubsection{Header and metadata formats}
+% TODO
+
+\begin{lstlisting}[caption={Header definitions in \texttt{main.p4}.},label={lst:headers}]
+#include <core.p4>
+#include <v1model.p4>
+
+typedef bit<48>  mac_addr_t;
+typedef bit<32>  ipv4_addr_t;
+
+const bit<16> ETHERTYPE_IPV4 = 0x0800;
+const bit<8> IP_PROTO_ICMP   = 1;
+const bit<8> IP_PROTO_TCP    = 6;
+
+header ethernet_t {
+    mac_addr_t  dst_addr;
+    mac_addr_t  src_addr;
+    bit<16>     ether_type;
+}
+
+header ipv4_t {
+    bit<4>   version;
+    bit<4>   ihl;
+    bit<6>   dscp;
+    bit<2>   ecn;
+    bit<16>  total_len;
+    bit<16>  identification;
+    bit<3>   flags;
+    bit<13>  frag_offset;
+    bit<8>   ttl;
+    bit<8>   protocol;
+    bit<16>  hdr_checksum;
+    bit<32>  src_addr;
+    bit<32>  dst_addr;
+}
+\end{lstlisting}
+
+\subsubsection{Packet parser}
+% TODO
+
+\subsubsection{Table specification}
+% TODO
+
+\subsubsection{Action specification}
+% TODO
+
+\subsection{Compiling a P4 program}

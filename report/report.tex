@@ -41,6 +41,35 @@
 \usepackage[spaces,hyphens]{url}
 \usepackage{float}
 
+\usepackage{listings}%source code listings
+% P4 is not a built-in listings language, so define it here
+\lstdefinelanguage{P4}{
+  morekeywords={action,actions,apply,bit,bool,const,control,default,default_action,
+    else,enum,error,exit,extern,extract,emit,false,header,header_union,if,in,inout,
+    key,out,package,parser,return,select,size,state,struct,switch,table,transition,
+    true,typedef,varbit,verify,void},
+  morecomment=[l]{//},
+  morecomment=[s]{/*}{*/},
+  morestring=[b]",
+  sensitive=true
+}
+\lstset{
+  language=P4,
+  basicstyle=\ttfamily\footnotesize,
+  keywordstyle=\bfseries,
+  commentstyle=\itshape\color{gray},
+  numbers=none,
+  frame=single,
+  framerule=0.4pt,
+  breaklines=true,
+  columns=fullflexible,
+  keepspaces=true,
+  showstringspaces=false,
+  aboveskip=6pt,
+  belowskip=6pt,
+  captionpos=b
+}
+
 
 % *** Do not adjust lengths that control margins, column widths, etc. ***
 % *** Do not use packages that alter fonts (such as pslatex).         ***
