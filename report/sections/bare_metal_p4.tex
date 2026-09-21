@@ -13,7 +13,7 @@ The push toward an OpenFlow 2.0 interface reflected two distinct pressures on an
 Programmable forwarding pipelines existed well before P4, in several forms, each trading away something essential. Software switches and modular frameworks such as Click~\cite{kohler2000click} offered complete flexibility, but executed on general-purpose CPUs and therefore operated far below the line rates expected of a switch ASIC; Click was also not designed for the controller-switch split that SDN assumes, and so provided no notion of match-action tables populated at runtime by a controller~\cite{bosshart2014p4}. At the other extreme, network processors, FPGAs, and---by 2013---reconfigurable match-action ASICs such as RMT~\cite{bosshart2013rmt} had demonstrated that this flexibility could in fact be achieved at terabit speeds. The obstacle there was not capability but usability: each chip exposed its own proprietary low-level interface, which Bosshart et al.\ compare to microcode programming, so a forwarding behavior written for one target could not be carried to another~\cite{bosshart2014p4}. The gap P4 was created to fill is therefore a linguistic one rather than a hardware one: it provides a high-level, protocol-agnostic language that a compiler can translate into the configuration each target requires, including the line-rate programmable ASIC pipelines these chips had already made possible~\cite{bosshart2014p4}.
 
 \subsection{Forwarding pipeline}
-At the architecture level, researchers introduced PISA (Protocol Independent Switching Architecture) as the pipeline design that gives P4 its reconfigurability~\cite{systemsapproach}. As shown in Fig.~\ref{fig:pisa-pipeline}, a PISA pipeline is built from three components---a programmable parser, a programmable multi-stage match-action pipeline, and a programmable deparser---each configured by the P4 program itself rather than hardcoded into switch firmware. This generic, configurable structure is what lets the same abstract model describe packet processing across otherwise very different forwarding devices---Ethernet switches, load-balancers, and routers---and across different underlying technologies, whether a fixed-function switch ASIC, an NPU, a reconfigurable switch, a software switch, or an FPGA~\cite{bosshart2014p4}.
+At the architecture level, researchers introduced PISA (Protocol Independent Switching Architecture) as the pipeline design that gives P4 its reconfigurability~\cite{systemsapproach}. As shown in Fig.~\ref{fig:pisa-pipeline}, a PISA pipeline is built from three components---a programmable parser, a programmable multi-stage match-action pipeline, and a programmable deparser---each configured by the P4 program itself rather than hardcoded into switch firmware. This generic, configurable structure is what lets the same abstract model describe packet processing across otherwise substantially different forwarding devices---Ethernet switches, load-balancers, and routers---and across different underlying technologies, whether a fixed-function switch ASIC, an NPU, a reconfigurable switch, a software switch, or an FPGA~\cite{bosshart2014p4}.
 
 \begin{figure}[H]
     \centering
@@ -31,7 +31,9 @@ The parser forms the first stage of the pipeline and extracts header fields from
 The preceding subsections described the forwarding pipeline in the abstract; this subsection grounds that description in a concrete program. The example used throughout is \texttt{main.p4}, the P4 program written for this project, which is compiled for and executed on BMv2, the reference P4 software switch~\cite{bmv2}. The program declares a range of header formats---Ethernet, IPv4, IPv6, TCP, UDP, ICMP, ICMPv6, and NDP---together with Segment Routing over IPv6 (SRv6) headers and a pair of CPU headers that carry packet-in and packet-out messages between the pipeline and the controller. The subsections that follow examine the program in the order a packet encounters it: the architecture it must conform to, the header formats it defines, the parser that extracts them, the tables that match on the extracted fields, and the actions those tables invoke.
 
 \subsubsection{The V1Switch pipeline}
-BMv2 executes programs written for the \texttt{v1model} architecture~\cite{bmv2}, whose \texttt{V1Switch} package fixes both the blocks a program must provide and the order in which they run: a parser, a checksum-verification block, an ingress pipeline, an egress pipeline, a checksum-computation block, and a deparser (Listing~\ref{lst:v1switch}). A program cannot add, reorder, or omit a stage; a block it does not need must still be supplied with an empty body.
+BMv2 executes programs written for the \texttt{v1model} architecture~\cite{bmv2}, whose \texttt{V1Switch} package fixes both the blocks a program must provide and the order in which they run: a parser, a checksum-verification block, an ingress pipeline, an egress pipeline, a checksum-computation block, and a deparser (Listing~\ref{lst:v1switch}). A program cannot add, reorder, or omit a stage; a block it does not need must still be supplied with an empty body. These six are only the programmable stages. As shown in Fig.~\ref{fig:v1model-pipeline}, the architecture also places a fixed-function traffic manager between the ingress and egress pipelines, which queues, replicates, and schedules packets~\cite{systemsapproach}; it is not expressed in P4 and is directed only indirectly, through the metadata written during ingress.
+
+
 
 \begin{lstlisting}[caption={Instantiating the \texttt{V1Switch} pipeline in \texttt{main.p4}.},label={lst:v1switch}]
 V1Switch(
@@ -44,8 +46,15 @@ V1Switch(
 ) main;
 \end{lstlisting}
 
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{graphics/v1model-pipeline.jpeg}
+    \caption{Programmable pipelines separated by a fixed-function traffic manager. Adapted from \cite{systemsapproach}.}
+    \label{fig:v1model-pipeline}
+\end{figure}
+
 \subsubsection{Header and metadata formats}
-% TODO
+P4 uses a C-like syntax for its type declarations, which makes this part of the program largely self-explanatory. A header is declared as an ordered sequence of named fields with explicit bit widths, and the program is free to define any header it requires; Listing~\ref{lst:headers} shows the Ethernet and IPv4 definitions. Widths may be given names of their own through \texttt{typedef}---for example \texttt{typedef bit<48> mac\_addr\_t}, naming the 48 bits that hold a MAC address. Values the program matches against are declared as named constants, such as \texttt{IP\_PROTO\_ICMP = 1} and \texttt{IP\_PROTO\_TCP = 6}, whose values are the protocol numbers assigned in RFC~790~\cite{rfc790}. Alongside the headers, the program declares a metadata structure carrying the per-packet state the pipeline needs but that is not necessary to appear on the wire.
 
 \begin{lstlisting}[caption={Header definitions in \texttt{main.p4}.},label={lst:headers}]
 #include <core.p4>
@@ -82,12 +91,43 @@ header ipv4_t {
 \end{lstlisting}
 
 \subsubsection{Packet parser}
+The parser is expressed as a finite state machine. Each state is introduced by the \texttt{state} keyword, and the transition out of that state is declared inside the state body itself. 
+
+\begin{lstlisting}[caption={Parser state machine in \texttt{main.p4}.},label={lst:parser}]
+parser ParserImpl (packet_in packet,
+            out parsed_headers_t hdr,
+            inout local_metadata_t l_metadata,
+            inout standard_metadata_t metadata) {
+state start {
+    transition select(metadata.ingress_port) {
+        CPU_PORT: parse_packet_out;
+        default: parse_ethernet;
+    }
+}
+
+state parse_packet_out {
+    packet.extract(hdr.cpu_out);
+    transition parse_ethernet;
+}
+
+state parse_ethernet {
+    packet.extract(hdr.ethernet);
+    transition select(hdr.ethernet.ether_type){
+        ETHERTYPE_IPV4: parse_ipv4;
+        ETHERTYPE_IPV6: parse_ipv6;
+        default: accept;
+    }
+}
+\end{lstlisting}
+
+Execution begins in the built-in \texttt{start} state; each subsequent state extracts one header from the packet into the header structure declared earlier, then transitions to the state responsible for interpreting the bytes that follow. The machine terminates in one of two built-in states: \texttt{accept}, marking the end of parsing and handing the extracted headers to the pipeline, or \texttt{reject}, marking a parsing failure~\cite{p4spec}.
+
+\subsubsection{Ingress processing}
 % TODO
 
-\subsubsection{Table specification}
+\subsubsection{Egress processing}
 % TODO
 
-\subsubsection{Action specification}
-% TODO
+\subsubsection{Deparser}
 
 \subsection{Compiling a P4 program}
