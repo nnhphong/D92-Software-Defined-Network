@@ -17,7 +17,7 @@ At the architecture level, researchers introduced PISA (Protocol Independent Swi
 
 \begin{figure}[H]
     \centering
-    \includegraphics[width=1\linewidth]{graphics/abstract-forwarding-pipeline.png}
+    \includegraphics[width=1\linewidth]{graphics/forwarding-pipeline.png}
     \caption{Abstract forwarding pipeline that model how most data plane devices are forwarding packet. Adapted from \cite{systemsapproach}.}
     \label{fig:pisa-pipeline}
 \end{figure}
@@ -25,7 +25,23 @@ At the architecture level, researchers introduced PISA (Protocol Independent Swi
 The parser forms the first stage of the pipeline and extracts header fields from an incoming packet by walking a program-defined parse graph: it sequentially extracts each header and copies its values into the memory defined by that header's structure (e.g., the IPv4 header). Once extracted, these fields are passed to the match-action pipeline, where the design's protocol independence is most apparent. Each stage of the pipeline pairs a block of memory---combining SRAM and TCAM~\cite{systemsapproach}---with an ALU. This memory is not preloaded by the switch vendor to recognize a fixed set of headers; that is, it does not inherently support IPv4 but not IPv6, or TCP but not UDP. It instead behaves as a generic bank of lookup-table entries that the P4 program itself populates at configuration time, using the match keys that a given header requires. The lookup is performed by the memory: the TCAM supports wildcard matching of the arriving packet's fields against the programmed entries, while exact matches are served from SRAM at lower cost~\cite{systemsapproach}. Only after a match is found does the ALU execute the action associated with the matched entry. Because each stage can be pipelined---one stage processing one packet while the next stage concurrently processes another---this reprogrammable design still sustains line-rate throughput~\cite{systemsapproach}. Finally, the deparser reassembles the modified header fields into a single serialized packet before it leaves the pipeline, following the header layout defined by the program.
 
 \subsection{Abstracting the pipeline}
+The pipeline described so far is a generic model, reduced to three components and abstracted away from any particular chip design. Production ASICs are considerably more elaborate and complex than this, and their pipelines differ from one vendor to the next, which raises the question of how a single program, or a single controller, can be written against such a variety of physical pipelines. The response is to interpose a single \textit{logical pipeline}: an abstract model of the forwarding pipeline that programs and controllers are written against, and which a compiler, provided by the vendor themselves, then maps onto the physical pipeline of a given chip. With such a model in place, controllers become pipeline-agnostic~\cite{systemsapproach}. Fig.~\ref{fig:abstract-pipeline} illustrates this arrangement: the controller addresses a logical pipeline, and the P4 compiler maps that logical pipeline onto the differing physical pipelines of each ASIC beneath it.
 
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{graphics/abstract-pipeline.png}
+    \caption{A logical pipeline mapped by the P4 compiler onto the physical pipelines of two different ASICs. Adapted from \cite{systemsapproach}.}
+    \label{fig:abstract-pipeline}
+\end{figure}
+
+The Portable Switch Architecture (PSA) is the standardization of this idea, developed by the P4 Consortium as a community effort~\cite{systemsapproach}. It is intended to give P4 developers an abstract target machine, analogous to a Java Virtual Machine, and with it a write-once-run-anywhere programming model~\cite{systemsapproach}. The industry, however, has not followed. Vendors do not provide the compiler backend that would map PSA onto their respective ASICs, which is precisely what the model depends on, and PSA therefore remains a mostly ``on paper'' artifact~\cite{systemsapproach}. The incentives run the other way: vendors face their own version of the multi-ASIC problem as they release new chips over time, and defining an architecture of their own allows them to expose the distinctive capabilities of their silicon without being constrained by a standardization process~\cite{systemsapproach}. What P4 developers write against in practice is therefore either V1Model, the simpler model illustrated in Fig.~\ref{fig:v1model-pipeline}, or a vendor-specific architecture such as the Tofino Native Architecture (TNA), defined by Barefoot for its family of programmable switching chips~\cite{systemsapproach}. In the latter case both the architecture and its backend compiler are proprietary, and the P4 program must conform to them. The portability objective is therefore not achieved: vendors retain the freedom to define their own pipelines, and a developer must write P4 against the architecture of the target in use. The resulting position nonetheless represents a significant advance on fixed-function forwarding. The pipeline is no longer determined in silicon by the vendor but is instead exposed to the developer, and it is this programmability, rather than portability across targets~\cite{systemsapproach}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{graphics/v1model-pipeline.jpeg}
+    \caption{V1Model. Adapted from \cite{systemsapproach}.}
+    \label{fig:v1model-pipeline}
+\end{figure}
 
 \subsection{Example of a P4 program}
 The preceding subsections described the forwarding pipeline in the abstract; this subsection grounds that description in a concrete program. The example used throughout is \texttt{main.p4}, the P4 program written for this project, which is compiled for and executed on BMv2, the reference P4 software switch~\cite{bmv2}. The program declares a range of header formats---Ethernet, IPv4, IPv6, TCP, UDP, ICMP, ICMPv6, and NDP---together with Segment Routing over IPv6 (SRv6) headers and a pair of CPU headers that carry packet-in and packet-out messages between the pipeline and the controller. The subsections that follow examine the program in the order a packet encounters it: the architecture it must conform to, the header formats it defines, the parser that extracts them, the tables that match on the extracted fields, and the actions those tables invoke.
@@ -45,13 +61,6 @@ V1Switch(
     DeparserImpl()
 ) main;
 \end{lstlisting}
-
-\begin{figure}[H]
-    \centering
-    \includegraphics[width=1\linewidth]{graphics/v1model-pipeline.jpeg}
-    \caption{Programmable pipelines separated by a fixed-function traffic manager. Adapted from \cite{systemsapproach}.}
-    \label{fig:v1model-pipeline}
-\end{figure}
 
 \subsubsection{Header and metadata formats}
 P4 uses a C-like syntax for its type declarations, which makes this part of the program largely self-explanatory. A header is declared as an ordered sequence of named fields with explicit bit widths, and the program is free to define any header it requires; Listing~\ref{lst:headers} shows the Ethernet and IPv4 definitions. Widths may be given names of their own through \texttt{typedef}---for example \texttt{typedef bit<48> mac\_addr\_t}, naming the 48 bits that hold a MAC address. Values the program matches against are declared as named constants, such as \texttt{IP\_PROTO\_ICMP = 1} and \texttt{IP\_PROTO\_TCP = 6}, whose values are the protocol numbers assigned in RFC~790~\cite{rfc790}. Alongside the headers, the program declares a metadata structure carrying the per-packet state the pipeline needs but that is not necessary to appear on the wire.
