@@ -17,3 +17,5 @@ ptf/ptf.pcap
 **/.factorypath
 util/.pipe_cfg
 ./*.md
+**/target/
+**/bin/
