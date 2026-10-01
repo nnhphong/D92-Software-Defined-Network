@@ -2,8 +2,6 @@
 % TODO: put a section on bare-metal switches hardware %
 Before turning to what P4 is and how the language itself is structured, it is worth establishing why a new data-plane programming model was needed at all. OpenFlow was built to reuse capability that switch vendors already had on-chip: McKeown et al.\ note that ``we exploit the fact that most modern Ethernet switches and routers contain flow-tables (typically built from TCAMs)'' used internally to implement functions such as firewalling, NAT, QoS, and statistics collection, and that OpenFlow simply exposes ``this common set of functions'' through a standard interface~\cite{mckeown2008openflow}. This was a deliberate compromise: rather than requiring new switch hardware, the design goal was a datapath ``amenable to high-performance and low-cost implementations,'' which meant ``forgoing the ability to specify arbitrary handling of each packet and seeking a more limited, but still useful, range of actions''~\cite{mckeown2008openflow}. In its original 2008 form this amounted to a single flow table matched against about a dozen header fields such as MAC address, IP address, protocol, and TCP/UDP ports~\cite{bosshart2014p4}.
 
-% TODO: explain, in your own words, why this compromise became OpenFlow's fundamental limitation as the specification and hardware evolved.
-
 \subsection{The fundamental limitation of OpenFlow}
 That original dozen-field flow table did not remain fixed for long. The formal OpenFlow 1.0 specification followed the 2008 proposal in December 2009, and each successive revision of the OpenFlow 1.x line extended the matchable field set to accommodate new headers, so that the number of supported fields rose from 12 to 41 by 2013~\cite{bosshart2014p4}. Yet as data-center networking continued to evolve, operators kept demanding support for still newer encapsulation headers (e.g., VXLAN, NVGRE); rather than continuing to extend OpenFlow 1.x indefinitely, researchers proposed a strawman ``OpenFlow 2.0'' interface instead~\cite{bosshart2014p4}.
 
@@ -65,10 +63,13 @@ V1Switch(
 \subsubsection{Header and metadata formats}
 P4 uses a C-like syntax for its type declarations, which makes this part of the program largely self-explanatory. A header is declared as an ordered sequence of named fields with explicit bit widths, and the program is free to define any header it requires; Listing~\ref{lst:headers} shows the Ethernet and IPv4 definitions. Widths may be given names of their own through \texttt{typedef}---for example \texttt{typedef bit<48> mac\_addr\_t}, naming the 48 bits that hold a MAC address. Values the program matches against are declared as named constants, such as \texttt{IP\_PROTO\_ICMP = 1} and \texttt{IP\_PROTO\_TCP = 6}, whose values are the protocol numbers assigned in RFC~790~\cite{rfc790}. Alongside the headers, the program declares a metadata structure carrying the per-packet state the pipeline needs but that is not necessary to appear on the wire.
 
+Not every header declared in this way corresponds to a protocol carried on the network. Listing~\ref{lst:headers} also defines \texttt{cpu\_in\_header\_t}, which is prepended to packets sent to the controller over the CPU port and records the port on which the packet originally arrived. The \texttt{@controller\_header("packet\_in")} annotation identifies it as a control-plane header, from which the P4Runtime server populates the metadata fields of the corresponding packet-in message. A second header, \texttt{cpu\_out\_header\_t}, serves the opposite direction, informing the pipeline of the port on which a packet received from the controller is to be transmitted. The declaration mechanism is therefore the same whether a header describes a standard protocol or a format defined solely for exchange between the pipeline and its control plane.
+
 \begin{lstlisting}[caption={Header definitions in \texttt{main.p4}.},label={lst:headers}]
 #include <core.p4>
 #include <v1model.p4>
 
+typedef bit<9>   port_num_t;
 typedef bit<48>  mac_addr_t;
 typedef bit<32>  ipv4_addr_t;
 
@@ -96,6 +97,12 @@ header ipv4_t {
     bit<16>  hdr_checksum;
     bit<32>  src_addr;
     bit<32>  dst_addr;
+}
+
+@controller_header("packet_in")
+header cpu_in_header_t {
+    port_num_t  ingress_port;
+    bit<7>      _pad;
 }
 \end{lstlisting}
 
@@ -132,11 +139,87 @@ state parse_ethernet {
 Execution begins in the built-in \texttt{start} state; each subsequent state extracts one header from the packet into the header structure declared earlier, then transitions to the state responsible for interpreting the bytes that follow. The machine terminates in one of two built-in states: \texttt{accept}, marking the end of parsing and handing the extracted headers to the pipeline, or \texttt{reject}, marking a parsing failure~\cite{p4spec}.
 
 \subsubsection{Ingress processing}
-% TODO
+Ingress is the stage in which forwarding decisions are made. It is expressed as a set of match-action tables together with an \texttt{apply} block that sequences them. A table declares three things: the \texttt{key} it matches on, paired with a match kind such as \texttt{exact} or \texttt{ternary}; the set of \texttt{actions} that an entry may invoke; and the \texttt{default\_action} taken when no entry matches. The table itself holds no entries in the program; these are installed at runtime by the controller, which is what allows forwarding policy to change without recompiling the pipeline. Listing~\ref{lst:ingress} shows the L2 forwarding table and the action it invokes.
+
+\begin{lstlisting}[caption={An ingress table, its action, and the control flow that applies it.},label={lst:ingress}]
+action set_egress_port(port_num_t port_num) {
+    standard_metadata.egress_spec = port_num;
+}
+
+table l2_exact_table {
+    key = {
+        hdr.ethernet.dst_addr: exact;
+    }
+    actions = {
+        set_egress_port;
+        @defaultonly drop;
+    }
+    const default_action = drop;
+}
+
+apply {
+    if (!l2_exact_table.apply().hit) {
+        l2_ternary_table.apply();
+    }
+    acl_table.apply();
+}
+\end{lstlisting}
+
+Two properties of this arrangement are worth noting. First, an action may take parameters, such as \texttt{port\_num} above, whose values are supplied by the matched entry at runtime rather than fixed in the program. Second, applying a table returns a result whose \texttt{hit} field can be tested, so the \texttt{apply} block expresses ordinary imperative control flow over the tables: here the exact-match table is consulted first, and the ternary table only if no entry matched. Forwarding is ultimately determined by writing \texttt{standard\_metadata.egress\_spec}, which the traffic manager reads once ingress completes.
 
 \subsubsection{Egress processing}
-% TODO
+Egress runs after the traffic manager, and therefore executes once per copy of the packet, at a point where the output port has already been fixed and is available read-only as \texttt{standard\_metadata.egress\_port}. Its role is consequently narrower than that of ingress: it applies adjustments that depend on the specific copy or on its destination port, as shown in Listing~\ref{lst:egress}.
+
+\begin{lstlisting}[caption={Egress processing in \texttt{main.p4}.},label={lst:egress}]
+apply {
+    if (standard_metadata.egress_port == CPU_PORT) {
+        hdr.cpu_in.setValid();
+        hdr.cpu_in.ingress_port = standard_metadata.ingress_port;
+    }
+
+    if (local_metadata.is_multicast == true &&
+          standard_metadata.ingress_port ==
+          standard_metadata.egress_port) {
+        mark_to_drop(standard_metadata);
+    }
+}
+\end{lstlisting}
+
+The first condition handles packets destined for the controller: the \texttt{cpu\_in} header is marked valid and stamped with the port on which the packet originally arrived, so that the controller receiving the packet-in message can recover that context. The second implements split horizon for multicast. Because replication has already occurred, one of the copies may be addressed to the port the packet arrived on; that copy is dropped, which prevents a broadcast NDP solicitation from being reflected back to its sender. Neither decision can be made during ingress, since neither the copy nor its egress port exists at that point.
 
 \subsubsection{Deparser}
+The deparser reassembles the outgoing packet. Its headers are passed as \texttt{in} parameters and are therefore read-only, and the only operation permitted is \texttt{emit}, so no further modification is possible at this stage~\cite{p4spec}. The program specifies a single, static emission order, given in Listing~\ref{lst:deparser}.
 
-\subsection{Compiling a P4 program}
+\begin{lstlisting}[caption={The deparser in \texttt{main.p4}.},label={lst:deparser}]
+control DeparserImpl(packet_out packet, in parsed_headers_t hdr) {
+    apply {
+        packet.emit(hdr.cpu_in);
+        packet.emit(hdr.ethernet);
+        packet.emit(hdr.ipv4);
+        packet.emit(hdr.ipv6);
+        packet.emit(hdr.srv6h);
+        packet.emit(hdr.srv6_list);
+        packet.emit(hdr.tcp);
+        packet.emit(hdr.udp);
+        packet.emit(hdr.icmp);
+        packet.emit(hdr.icmpv6);
+        packet.emit(hdr.ndp);
+    }
+}
+\end{lstlisting}
+
+Although the order is fixed, the emitted packet is not. An \texttt{emit} on a header that is not valid has no effect, so only those headers that the parser extracted, or that the pipeline subsequently marked valid, appear on the wire. A single sequence therefore serializes packets of different shapes correctly: an IPv4 packet emits \texttt{ipv4} and skips \texttt{ipv6}, an IPv6 packet does the reverse, and a packet sent to the controller additionally carries the \texttt{cpu\_in} header that egress marked valid.
+
+\subsection{P4 within the wider SDN stack}
+The preceding subsections treated the P4 program in isolation. In practice it is one component among several, and compilation is the point at which it is joined to the rest of the stack. The vendor supplies both the architecture and the backend compiler for its chips; the developer writes a program conforming to that architecture; and the compiler translates the program into a form the target can load. For the example used here, the program is compiled by \texttt{p4c-bm2-ss} compiler provided by BMv2 switch community against the \texttt{v1model} architecture, which produces two distinct outputs.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{graphics/p4-workflow.jpeg}
+    \caption{P4 workflow.}
+    \label{fig:p4-workflow}
+\end{figure}
+
+The first, \texttt{bmv2.json}, is the target-specific configuration the software switch loads to realize the pipeline. The second, \texttt{p4info.txt}, is a Protocol Buffers description of the interface through which the control plane addresses that pipeline: the tables it contains, the match fields and match types each is keyed on, the actions each may invoke and their parameters, together with the numeric identifiers by which a controller refers to them over P4Runtime. The former determines how packets are processed; the latter determines how that processing is populated, and it answers a question left open earlier, namely how a controller configures a pipeline it did not define. No part of the forwarding logic is communicated to the controller; the P4Info contract is. Both endpoints hold that contract, since the P4Runtime pipeline configuration message carries the P4Info alongside the target-specific configuration: the switch agent needs the same mapping to resolve the requests it receives.
+
+Supplying the contract is not sufficient on its own. A controller that knows which tables exist still operates in generic, topology-agnostic terms, and something must map that intent onto entries in the specific tables this program defines. How the Network OS consumes these two artefacts, and what must be implemented alongside them, is the subject of Section~\ref{sec:onos}.
