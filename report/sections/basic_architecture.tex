@@ -1,4 +1,4 @@
-\section{Basic Architecture}
+\section{Basic Architecture}\label{sec:basic-architecture}
 The core philosophy of Software-Defined Networking is horizontal disaggregation across every layers of the networking stack~\cite{systemsapproach}. Rather than relying on a vertically integrated, propriety hardware appliances, SDN decompose them into abstract components that is independent from other components, allowing each of which being used interchangeably and innovated at each layer.
 \begin{itemize}
     \item \textbf{Local Network OS layer:} Physical switch hardware is decoupled from proprietary vendor software through bare-metal whitebox switches. Utilizing an Open Network Install Environment (ONIE) bootloader~\cite{onie}, the switch can load any compatible local Network OS (e.g., Stratum, SONiC) to handle local hardware initialization and peripheral management.
