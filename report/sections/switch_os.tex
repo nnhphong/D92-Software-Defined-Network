@@ -26,8 +26,7 @@ On its southbound side, Stratum relies on two vendor- and platform-specific comp
     \label{fig:switch-os-arch}
 \end{figure}
 
-\subsection{Northbound protocols}
-\subsubsection{P4Runtime}\label{sec:p4runtime}
+\subsection{P4Runtime}\label{sec:p4runtime}
 Section~\ref{sec:p4-sdn-stack} ended with two files, \texttt{bmv2.json} and the P4Info, and an open question: how does a controller program tables it never defined? P4Runtime is the answer. P4Runtime is a control-plane protocol, built on gRPC and Protocol Buffers, through which a controller manages at runtime the data-plane entities of a device whose pipeline is defined by a P4 program, such as its tables, counters, and meters~\cite{p4runtime}. Every P4Runtime write has the same simple shape: put an entry in table $X$ that matches value $Y$ and runs action $Z$. The protocol itself does not know what $X$, $Y$, or $Z$ mean; the P4Info tells the controller which tables, fields, and actions exist, and the controller picks the values. Because nothing about specific headers is built into the protocol, P4Runtime achieves protocol independence, just as P4 does. This is exactly what OpenFlow could not do (Section~\ref{sec:openflow-limitation}), since its messages list the header fields a switch is allowed to match.
 
 Besides writing table entries, P4Runtime also supports~\cite{p4runtime}:
@@ -49,10 +48,10 @@ Fig.~\ref{fig:p4runtime-workflow} shows the overall workflow with P4Runtime. The
 \end{figure}
 
 \begin{enumerate}
-    \item The P4 program is compiled into \texttt{bmv2.json} and the P4Info, and both are given to ONOS.
-    \item When the switch boots, ONOS connects to it and is elected as the controller in charge. ONOS is the P4Runtime client; the Switch OS is the server.
-    \item ONOS sends both files to the switch. The Switch OS loads \texttt{bmv2.json} into the forwarding chip, and keeps the P4Info so it understands the table and action IDs in later requests.
-    \item ONOS starts writing table entries, and the switch begins forwarding traffic.
+    \item The P4 program is compiled into \texttt{bmv2.json} and the P4Info, and both are given to the controller (ONOS in this project, see Section~\ref{sec:onos}).
+    \item When the switch boots, the controller connects to it and is elected as the controller in charge. The controller is the P4Runtime client; the Switch OS is the server.
+    \item The controller sends both files to the switch. The Switch OS loads \texttt{bmv2.json} into the forwarding chip, and keeps the P4Info so it understands the table and action IDs in later requests.
+    \item The controller starts writing table entries, and the switch begins forwarding traffic.
 \end{enumerate}
 
 To make this concrete, Listing~\ref{lst:l2-exact} shows the table \texttt{main.p4} uses for unicast bridging, and Listing~\ref{lst:l2-exact-p4info} shows what the compiler wrote about it in \texttt{p4info.txt}.
@@ -117,33 +116,9 @@ actions {
 }
 \end{lstlisting}
 
-Notice that the P4Info says nothing about how the table works; it only gives the controller names, IDs, and sizes. The table is ID 33605373, its key is a 48-bit exact match on the destination MAC address, and the action \texttt{set\_egress\_port} is ID 16812802 with one 9-bit parameter. The \texttt{drop} action is marked \texttt{DEFAULT\_ONLY}, so the controller cannot use it in a normal entry.
+Notice that the P4Info says nothing about how the table works; it only gives the controller names, IDs, and sizes. The table is ID 33605373, its key is a 48-bit exact match on the destination MAC address, and the action \texttt{set\_egress\_port} is ID 16812802 with one 9-bit parameter. The \texttt{drop} action is marked \texttt{DEFAULT\_ONLY}, so the controller cannot use it in a normal entry. This is all the controller needs to write entries into the table.
 
-Listing~\ref{lst:onos-learnhost} shows how ONOS in this project uses it. When ONOS discovers a new host, the \texttt{L2BridgingComponent} application builds a flow rule for \texttt{l2\_exact\_table}: match the host's MAC address on \texttt{hdr.ethernet.dst\_addr}, and run \texttt{set\_egress\_port} with the port the host is attached to. The application refers to everything by the names that appear in the P4Info, not by numeric IDs.
-
-\begin{lstlisting}[language=Java,caption={Building an \texttt{l2\_exact\_table} entry in \texttt{L2BridgingComponent.java} (simplified).},label={lst:onos-learnhost}]
-String tableId = "IngressPipeImpl.l2_exact_table";
-
-PiCriterion match = PiCriterion.builder()
-    .matchExact(
-        PiMatchFieldId.of("hdr.ethernet.dst_addr"),
-        host.mac().toBytes())
-    .build();
-
-PiAction action = PiAction.builder()
-    .withId(PiActionId.of(
-        "IngressPipeImpl.set_egress_port"))
-    .withParameter(new PiActionParam(
-        PiActionParamId.of("port_num"),
-        port.toLong()))
-    .build();
-
-FlowRule rule = Utils.buildFlowRule(
-    deviceId, appId, tableId, match, action);
-flowRuleService.applyFlowRules(rule);
-\end{lstlisting}
-
-ONOS then uses the P4Info to translate this rule into a P4Runtime message. Each name is replaced by its ID, and each value is encoded in bytes according to the bit width given in the P4Info: 48 bits for the MAC address and 9 bits for the port. The result is sent to the switch with the \texttt{Write} RPC. For a host with MAC address \texttt{00:00:00:00:00:1a} attached to port 3, the request looks like Listing~\ref{lst:write-request}.
+To install an entry, the controller uses the P4Info to build a P4Runtime message. Each table, field, and action is identified by its ID, and each value is encoded in bytes according to the bit width given in the P4Info: 48 bits for the MAC address and 9 bits for the port. The message is sent to the switch with the \texttt{Write} RPC. For a host with MAC address \texttt{00:00:00:00:00:1a} attached to port 3, the request looks like Listing~\ref{lst:write-request}. Further details on how the controller builds this request in this project are given as an example in Section~\ref{sec:onos-write}.
 
 \begin{lstlisting}[language={},caption={The resulting P4Runtime \texttt{Write} request (simplified).},label={lst:write-request}]
 updates {
@@ -169,4 +144,16 @@ updates {
 }
 \end{lstlisting}
 
-The \texttt{type} field tells the switch what to do with the entry: \texttt{INSERT} adds it, \texttt{MODIFY} changes its action, for example if the host moves to another port, and \texttt{DELETE} removes it. On the switch side, the Switch OS uses its copy of the P4Info to resolve the IDs and installs the entry into the forwarding chip. From then on, frames addressed to that host leave through port 3 without involving the controller. ONOS can also call the \texttt{Read} RPC to fetch the table's current entries, which it uses to check that the switch still holds the rules it expects.
+The \texttt{type} field tells the switch what to do with the entry: \texttt{INSERT} adds it, \texttt{MODIFY} changes its action, for example if the host moves to another port, and \texttt{DELETE} removes it. On the switch side, the Switch OS uses its copy of the P4Info to resolve the IDs and installs the entry into the forwarding chip. From then on, frames addressed to that host leave through port 3 without involving the controller. The controller can also call the \texttt{Read} RPC to fetch the table's current entries, which it uses to check that the switch still holds the rules it expects.
+
+\subsection{YANG and OpenConfig}\label{sec:yang-openconfig}
+YANG and OpenConfig are the groundwork on which the gNMI and gNOI interfaces of Section~\ref{sec:gnmi-gnoi} are built. To see why they are needed, it is useful to first consider how device state has traditionally been described. Historically, network devices exposed their state through a Management Information Base (MIB): a standardized dictionary of device variables, such as interface status, health indicators, and traffic counters, defined uniformly across devices and therefore independent of any particular vendor~\cite{systemsapproach}. Used together with the Simple Network Management Protocol (SNMP), the MIB gave operators read access to this state for monitoring purposes. The shift to SDN, however, requires write access as well, since a controller must not only observe a device but also configure it. Meeting this requirement meant revisiting how the device data model itself is defined~\cite{systemsapproach}.
+
+YANG is the modeling language that emerged to fill this role. A YANG model defines each device variable together with a human-readable description of its meaning, while remaining precise enough to be read and written programmatically. In this respect YANG plays a role similar to XML Schema (XSD) or JSON Schema: it defines the structure of the data. Unlike those schema languages, however, YANG is not tied to a single encoding. XSD describes only XML documents and JSON Schema only JSON documents, whereas data defined by a YANG model can be encoded as XML, JSON, or Protocol Buffers~\cite{systemsapproach}.
+
+OpenConfig is an industry-wide standardization effort, driven by network operators that are driving to a convergence, vendor-neutral, programmable network model~\cite{openconfig}. The effort has two parts. The first is a set of data models, written in YANG, that describe the configuration and operational state of common device features, such as interfaces, routing protocols, and platform components, in the same way on every vendor's equipment. The second is a family of modern RPC-based interfaces built on gRPC: gNMI for reading and writing configuration and state, gNOI for performing operational actions on the device, gRIBI (gRPC Routing Information Base Interface) for programming routing entries, and gNSI (gRPC Network Security Interface) for managing the device's security policies, such as certificates and access control. These interfaces are intended as alternatives to traditional management protocols such as SNMP and NETCONF\footnote{NETCONF is an IETF protocol for installing and retrieving device configuration, encoded in XML and typically carried over SSH. YANG was originally designed as the modeling language for NETCONF.}. Stratum exposes two of these interfaces, gNMI and gNOI. Technically, gNMI can operate on any YANG model rather than only those published by OpenConfig; in Stratum, however, the two are used together, with gNMI exposing the switch's configuration and state through the OpenConfig models. Both interfaces are described next.
+
+% TODO: add YANG network model example
+% TODO: add YANG data representation illustration (XML, JSON, Protouf)
+% TODO: research if gRIBI inject routing entries to RIB at runtime
+\subsection{gNMI and gNOI}\label{sec:gnmi-gnoi}

@@ -1,1 +1,29 @@
 \section{Network OS}\label{sec:onos}
+% TODO: introduce the Network OS and ONOS here
+
+\subsection{From an application to a P4Runtime write}\label{sec:onos-write}
+Section~\ref{sec:p4runtime} showed the P4Runtime \texttt{Write} request that installs a host's entry in \texttt{l2\_exact\_table} (Listing~\ref{lst:write-request}). Listing~\ref{lst:onos-learnhost} shows where that request comes from. When ONOS discovers a new host, the \texttt{L2BridgingComponent} application builds a flow rule for \texttt{l2\_exact\_table}: match the host's MAC address on \texttt{hdr.ethernet.dst\_addr}, and run \texttt{set\_egress\_port} with the port the host is attached to. The application refers to everything by the names that appear in the P4Info, not by numeric IDs.
+
+\begin{lstlisting}[language=Java,caption={Building an \texttt{l2\_exact\_table} entry in \texttt{L2BridgingComponent.java} (simplified).},label={lst:onos-learnhost}]
+String tableId = "IngressPipeImpl.l2_exact_table";
+
+PiCriterion match = PiCriterion.builder()
+    .matchExact(
+        PiMatchFieldId.of("hdr.ethernet.dst_addr"),
+        host.mac().toBytes())
+    .build();
+
+PiAction action = PiAction.builder()
+    .withId(PiActionId.of(
+        "IngressPipeImpl.set_egress_port"))
+    .withParameter(new PiActionParam(
+        PiActionParamId.of("port_num"),
+        port.toLong()))
+    .build();
+
+FlowRule rule = Utils.buildFlowRule(
+    deviceId, appId, tableId, match, action);
+flowRuleService.applyFlowRules(rule);
+\end{lstlisting}
+
+ONOS then uses the P4Info to turn this rule into that \texttt{Write} request. Each name is replaced by its ID, and each value is encoded in bytes according to the bit width given in the P4Info: 48 bits for the MAC address and 9 bits for the port. The application therefore never deals with numeric IDs or byte encodings; it only uses the names defined in the P4 program.
