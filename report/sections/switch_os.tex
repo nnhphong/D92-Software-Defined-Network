@@ -151,9 +151,82 @@ YANG and OpenConfig are the groundwork on which the gNMI and gNOI interfaces of 
 
 YANG is the modeling language that emerged to fill this role. A YANG model defines each device variable together with a human-readable description of its meaning, while remaining precise enough to be read and written programmatically. In this respect YANG plays a role similar to XML Schema (XSD) or JSON Schema: it defines the structure of the data. Unlike those schema languages, however, YANG is not tied to a single encoding. XSD describes only XML documents and JSON Schema only JSON documents, whereas data defined by a YANG model can be encoded as XML, JSON, or Protocol Buffers~\cite{systemsapproach}.
 
-OpenConfig is an industry-wide standardization effort, driven by network operators that are driving to a convergence, vendor-neutral, programmable network model~\cite{openconfig}. The effort has two parts. The first is a set of data models, written in YANG, that describe the configuration and operational state of common device features, such as interfaces, routing protocols, and platform components, in the same way on every vendor's equipment. The second is a family of modern RPC-based interfaces built on gRPC: gNMI for reading and writing configuration and state, gNOI for performing operational actions on the device, gRIBI (gRPC Routing Information Base Interface) for programming routing entries, and gNSI (gRPC Network Security Interface) for managing the device's security policies, such as certificates and access control. These interfaces are intended as alternatives to traditional management protocols such as SNMP and NETCONF\footnote{NETCONF is an IETF protocol for installing and retrieving device configuration, encoded in XML and typically carried over SSH. YANG was originally designed as the modeling language for NETCONF.}. Stratum exposes two of these interfaces, gNMI and gNOI. Technically, gNMI can operate on any YANG model rather than only those published by OpenConfig; in Stratum, however, the two are used together, with gNMI exposing the switch's configuration and state through the OpenConfig models. Both interfaces are described next.
+OpenConfig is an industry-wide standardization effort, driven by network operators that are driving to a convergence, vendor-neutral, programmable network model~\cite{openconfig}. The effort has two parts. The first is a set of data models, written in YANG, that describe the configuration and operational state of common device features, such as interfaces, routing protocols, and platform components, in the same way on every vendor's equipment. The second is a family of modern RPC-based interfaces built on gRPC: gNMI for reading and writing configuration and state, gNOI for performing operational actions on the device, gRIBI (gRPC Routing Information Base Interface) for programming routing entries, and gNSI (gRPC Network Security Interface) for managing the device's security policies, such as certificates and access control. These interfaces are intended as alternatives to traditional management protocols such as SNMP and NETCONF\footnote{NETCONF is an IETF protocol for installing and retrieving device configuration, encoded in XML and typically carried over SSH. YANG was originally designed as the modeling language for NETCONF.}.
 
-% TODO: add YANG network model example
+Listing~\ref{lst:oc-interfaces} shows an example of an OpenConfig model, \texttt{openconfig-interfaces}, which describes the network interfaces of a device. The model is shown in the YANG tree diagram notation, in which each line is a node of the data tree: \texttt{rw} marks configuration that a client can read and write, \texttt{ro} marks operational state that is read-only, \texttt{*} marks a list whose entries are identified by the key in brackets, and \texttt{?} marks an optional node. The model defines a list of interfaces keyed by name, and each interface keeps its configuration (\texttt{config}) separate from its operational state (\texttt{state}), a convention followed throughout the OpenConfig models.
+
+\begin{lstlisting}[language={},caption={The base OpenConfig model for network interfaces (abridged). Adapted from \cite{systemsapproach}.},label={lst:oc-interfaces}]
+module: openconfig-interfaces
+  +--rw interfaces
+     +--rw interface* [name]
+        +--rw name
+        +--rw config
+        |  ...
+        +--ro state
+        |  ...
+        +--rw hold-time
+        |  ...
+        +--rw subinterfaces
+           ...
+\end{lstlisting}
+
+The base model describes only the properties that are common to every kind of interface. Properties specific to a particular kind of interface are added by separate modules through \textit{augmentation}, which attaches new nodes to an existing model without modifying it. Listing~\ref{lst:oc-ethernet} shows the \texttt{openconfig-if-ethernet} module, which augments each interface with an \texttt{ethernet} container. This container holds Ethernet-specific configuration, such as the MAC address, port speed, and duplex mode, together with the corresponding state, such as the hardware MAC address and the interface counters.
+
+\begin{lstlisting}[language={},caption={The Ethernet augmentation of the OpenConfig interfaces model (abridged). Adapted from \cite{systemsapproach}.},label={lst:oc-ethernet}]
+module: openconfig-if-ethernet
+  augment /oc-if:interfaces/oc-if:interface:
+    +--rw ethernet
+       +--rw config
+       |  +--rw mac-address?
+       |  +--rw auto-negotiate?
+       |  +--rw duplex-mode?
+       |  +--rw port-speed?
+       |  +--rw enable-flow-control?
+       +--ro state
+          +--ro mac-address?
+          +--ro auto-negotiate?
+          +--ro duplex-mode?
+          +--ro port-speed?
+          +--ro enable-flow-control?
+          +--ro hw-mac-address?
+          +--ro counters
+             ...
+\end{lstlisting}
+
+Technically, gNMI can operate on any YANG model, and in contrast, YANG is also not tied to either gRPC or gNMI; in Stratum, however, the two are used together, with gNMI exposing the switch's configuration and state through the OpenConfig models. Both interfaces are described next.
+
 % TODO: add YANG data representation illustration (XML, JSON, Protouf)
 % TODO: research if gRIBI inject routing entries to RIB at runtime
 \subsection{gNMI and gNOI}\label{sec:gnmi-gnoi}
+gNMI defines a small set of RPCs through which a client reads and writes the data tree described by the device's YANG models~\cite{gnmi}. Listing~\ref{lst:gnmi-service} shows the four RPCs that gNMI defines:
+\begin{itemize}
+    \item \texttt{Capabilities} returns the capabilities of the target: the YANG models it implements, the encodings it accepts, and the gNMI version it supports;
+    \item \texttt{Get} retrieves a snapshot of data from the target;
+    \item \texttt{Set} modifies data on the target;
+    \item \texttt{Subscribe} opens a stream over which the target sends updates for the data that the client has subscribed to.
+\end{itemize}
+
+\begin{lstlisting}[language={},caption={The RPCs defined by the gNMI service.},label={lst:gnmi-service}]
+service gNMI {
+    rpc Capabilities(CapabilityRequest)
+        returns (CapabilityResponse);
+    rpc Get(GetRequest) returns (GetResponse);
+    rpc Set(SetRequest) returns (SetResponse);
+    rpc Subscribe(stream SubscribeRequest)
+        returns (stream SubscribeResponse);
+}
+\end{lstlisting}
+
+gNOI complements gNMI by covering operations that are not naturally expressed as reading or writing a value in the data tree, such as rebooting the switch, testing reachability, installing certificates, or transferring files~\cite{gnoi}. Unlike gNMI, gNOI does not rely on YANG models: each operation is defined directly as an RPC in Protocol Buffers, and related operations are grouped into separate services, such as \texttt{System}, \texttt{Cert}, and \texttt{File}. Listing~\ref{lst:gnoi-system} shows part of the \texttt{System} service.
+
+\begin{lstlisting}[language={},caption={Part of the gNOI \texttt{System} service.},label={lst:gnoi-system}]
+service System {
+    rpc Ping(PingRequest)
+        returns (stream PingResponse) {}
+    rpc Traceroute(TracerouteRequest)
+        returns (stream TracerouteResponse) {}
+    rpc Reboot(RebootRequest)
+        returns (RebootResponse) {}
+    // ...
+}
+\end{lstlisting}

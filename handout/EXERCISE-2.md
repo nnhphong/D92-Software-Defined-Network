@@ -411,7 +411,8 @@ notification {
 }
 notification {
   update {
-    path {
+    path {The contents of the response should now be easier to read. Scroll down to the first
+
       elem {
         name: "interfaces"
       }
